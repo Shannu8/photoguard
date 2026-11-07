@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Uploads & Temporary Image Cache
+uploads/
+*.tmp
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.tmp/
+.oxlintrc.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
