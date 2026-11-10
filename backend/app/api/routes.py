@@ -1,16 +1,21 @@
 """REST API endpoints for mathematical image analysis."""
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Path
+import logging
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Path, Response
 from typing import Optional
 import io
 import numpy as np
 from PIL import Image
+
+logger = logging.getLogger("photoguard.api")
 
 from app.services.image_service import image_service
 from app.services.matrix_service import matrix_service
 from app.services.eigen_service import eigen_service
 from app.services.svd_service import svd_service
 from app.services.reconstruction_service import reconstruction_service
+from app.services.transformation_service import transformation_service
+from app.services.perturbation_service import perturbation_service
 from app.models.schemas import (
     ImageMetadataResponse,
     PixelInspectionRequest,
@@ -22,6 +27,11 @@ from app.models.schemas import (
     SVDAnalysisResponse,
     ReconstructionRequest,
     ReconstructionResponse,
+    TransformationRequest,
+    TransformationResponse,
+    TensorMetadataResponse,
+    PerturbationRequest,
+    PerturbationResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["Mathematical Image Analysis"])
@@ -34,24 +44,40 @@ async def upload_image(file: UploadFile = File(...)):
     Validates format, preserves original bytes without alteration,
     and initializes mathematical representations.
     """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No filename provided.")
+    if not file or not file.filename:
+        logger.warning("Upload rejected: No file or filename provided.")
+        raise HTTPException(status_code=400, detail="No file or filename provided.")
 
-    contents = await file.read()
+    logger.info("Upload request received: filename='%s', content_type='%s'", file.filename, file.content_type)
+
+    try:
+        contents = await file.read()
+    except Exception as e:
+        logger.error("Failed to read uploaded file stream: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to read file stream: {str(e)}")
+
     if len(contents) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        logger.warning("Upload rejected: File '%s' is empty (0 bytes).", file.filename)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty (0 bytes).")
 
-    # Size limit guard (e.g. 20MB)
+    # Size limit guard (20MB)
     if len(contents) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (exceeds 20MB limit).")
+        logger.warning("Upload rejected: File '%s' exceeds 20MB limit (size: %d bytes).", file.filename, len(contents))
+        raise HTTPException(status_code=413, detail="File exceeds size limit (maximum 20MB allowed).")
 
     try:
         metadata = image_service.upload_image(file.filename, contents)
+        logger.info(
+            "Successfully processed image '%s' -> ID: %s, Dimensions: %dx%d, Format: %s",
+            file.filename, metadata.image_id, metadata.width, metadata.height, metadata.format
+        )
         return metadata
     except ValueError as e:
+        logger.warning("Image validation error for '%s': %s", file.filename, str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
+        logger.error("Unexpected server processing error for '%s': %s", file.filename, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Server processing error while analyzing image.")
 
 
 @router.get("/sample-image", response_model=ImageMetadataResponse)
@@ -219,4 +245,136 @@ def reconstruct_image(
         raise HTTPException(status_code=404, detail="Image not found.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==============================================================================
+# Phase 3: Mathematical Transformations & Tensor Export Endpoints
+# ==============================================================================
+
+@router.post("/images/{image_id}/transform", response_model=TransformationResponse)
+def transform_image(
+    image_id: str = Path(...),
+    req: TransformationRequest = ...,
+):
+    """
+    Applies mathematical transformations (rotation, scaling, reflection, shearing, translation)
+    using homogeneous 2D affine coordinates. Supports sequential composition and interpolation selection.
+    """
+    try:
+        stored = image_service.get_image(image_id)
+        return transformation_service.apply_transformations(stored, req)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Transformation failed for image %s: %s", image_id, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Transformation processing error.")
+
+
+@router.get("/images/{image_id}/tensors/metadata", response_model=TensorMetadataResponse)
+def get_tensor_metadata(image_id: str = Path(...)):
+    """
+    Retrieves metadata (shape, dtype, element count, estimated size)
+    for in-memory original and transformed tensors.
+    """
+    try:
+        return image_service.get_tensor_metadata(image_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+
+@router.get("/images/{image_id}/tensors/download")
+def download_tensor(
+    image_id: str = Path(...),
+    target: str = Query(
+        default="original_rgb",
+        description="Tensor target: 'original_rgb', 'transformed_rgb', 'original_grayscale', 'transformed_grayscale', 'perturbed_rgb', 'perturbed_grayscale', 'perturbation', 'difference', 'absolute_difference', 'perturbed_rgb_normalized', 'perturbation_normalized', 'delta_normalized', 'all'"
+    ),
+    format: str = Query(default="npy", description="Format: 'npy', 'npz', or 'csv'"),
+):
+    """
+    Exports complete numerical image tensor without loss, rounding, or normalization.
+    Returns downloadable binary NPY, multi-array NPZ, or CSV text streams.
+    """
+    try:
+        file_bytes, media_type, filename = image_service.export_tensor(image_id, target, format)
+        return Response(
+            content=file_bytes,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Tensor export failed for %s (%s, %s): %s", image_id, target, format, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Tensor export processing error.")
+
+
+@router.get("/images/{image_id}/download")
+def download_image_file(
+    image_id: str = Path(...),
+    target: str = Query(
+        default="perturbed_rgb",
+        description="Target image to download: 'perturbed_rgb', 'original_rgb', or 'transformed_rgb'"
+    ),
+):
+    """
+    Downloads the selected image as a lossless 8-bit quantized PNG file.
+    Does not modify internal tensors or affect subsequent calculations.
+    """
+    try:
+        file_bytes, media_type, filename = image_service.get_image_png_bytes(image_id, target)
+        return Response(
+            content=file_bytes,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Image download failed for %s (%s): %s", image_id, target, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Image download processing error.")
+
+
+@router.post("/images/{image_id}/perturb", response_model=PerturbationResponse)
+def perturb_image(
+    image_id: str = Path(...),
+    req: PerturbationRequest = ...,
+):
+    """
+    Applies mathematical perturbation (additive bounded, multiplicative, gaussian,
+    salt & pepper, or inversion) to an image tensor. Computes quality metrics,
+    difference heatmaps, and optional pixel neighborhood inspection.
+    """
+    try:
+        stored = image_service.get_image(image_id)
+        return perturbation_service.apply_perturbation(stored, req)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Image not found.")
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Perturbation failed for image %s: %s", image_id, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail="Perturbation processing error.")
+
+
+@router.get("/images/{image_id}/perturbation/metadata")
+def get_perturbation_metadata(image_id: str = Path(...)):
+    """
+    Retrieves current perturbation metadata and metrics for the specified image.
+    """
+    try:
+        stored = image_service.get_image(image_id)
+        if stored.perturbation_metadata is None or stored.perturbed_rgb_array is None:
+            raise HTTPException(status_code=404, detail="No perturbation has been applied to this image.")
+        return stored.perturbation_metadata
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Image not found.")
 

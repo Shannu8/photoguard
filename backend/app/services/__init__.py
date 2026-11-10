@@ -5,6 +5,7 @@ from app.services.matrix_service import matrix_service
 from app.services.eigen_service import eigen_service
 from app.services.svd_service import svd_service
 from app.services.reconstruction_service import reconstruction_service
+from app.services.transformation_service import transformation_service
 
 __all__ = [
     "image_service",
@@ -13,5 +14,6 @@ __all__ = [
     "eigen_service",
     "svd_service",
     "reconstruction_service",
+    "transformation_service",
 ]
 

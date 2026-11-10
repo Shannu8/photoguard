@@ -8,6 +8,8 @@ import {
   Layers,
   Sparkles,
   ArrowRightLeft,
+  Compass,
+  ShieldAlert,
 } from 'lucide-react';
 
 export type ActiveTab =
@@ -18,7 +20,9 @@ export type ActiveTab =
   | 'rank'
   | 'eigen'
   | 'svd'
-  | 'reconstruction';
+  | 'reconstruction'
+  | 'transformations'
+  | 'perturbation';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -93,6 +97,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       sublabel: 'A_k = U_k Σ_k V_kᵀ & PSNR',
       icon: Sparkles,
       phase: 'Phase 2',
+      requiresImage: true,
+    },
+    {
+      id: 'transformations' as ActiveTab,
+      label: 'Transformations & Tensors',
+      sublabel: 'R(θ), S, F, H, T & Tensor Export',
+      icon: Compass,
+      phase: 'Phase 3',
+      requiresImage: true,
+    },
+    {
+      id: 'perturbation' as ActiveTab,
+      label: 'Perturbation Engine',
+      sublabel: 'Noise, Bounds ||Δ||_∞ & SSIM',
+      icon: ShieldAlert,
+      phase: 'Phase 4',
       requiresImage: true,
     },
   ];

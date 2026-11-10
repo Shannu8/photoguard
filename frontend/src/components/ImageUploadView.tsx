@@ -1,7 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, AlertCircle, FileCheck, Sparkles, ShieldCheck } from 'lucide-react';
+import { UploadCloud, AlertCircle, FileCheck, Sparkles, ShieldCheck, ServerCrash, RefreshCw } from 'lucide-react';
 import type { ImageMetadata } from '../types';
 import { uploadImage, loadSampleImage } from '../services/api';
+
+const ALLOWED_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 interface ImageUploadViewProps {
   metadata: ImageMetadata | null;
@@ -17,18 +20,57 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<'network' | 'validation' | 'server' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = async (file: File) => {
     setError(null);
+    setErrorType(null);
+
+    // 1. Client-side empty file validation
+    if (!file || file.size === 0) {
+      setError('Selected file is empty (0 bytes). Please choose a valid image file.');
+      setErrorType('validation');
+      return;
+    }
+
+    // 2. Client-side file size validation (20MB)
+    if (file.size > MAX_FILE_SIZE) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      setError(`File exceeds size limit: selected file is ${sizeMB} MB (maximum allowed is 20 MB).`);
+      setErrorType('validation');
+      return;
+    }
+
+    // 3. Client-side format validation
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const isImageMime = file.type.startsWith('image/');
+    if (!ALLOWED_EXTENSIONS.includes(ext) && !isImageMime) {
+      setError(`Unsupported image format '.${ext || 'unknown'}'. Supported formats: PNG, JPEG/JPG, WebP, BMP.`);
+      setErrorType('validation');
+      return;
+    }
+
     setLoading(true);
     try {
       const meta = await uploadImage(file);
       onImageLoaded(meta);
     } catch (err: any) {
-      setError(err.message || 'Failed to upload image');
+      const msg = err.message || 'Image upload failed.';
+      setError(msg);
+      if (msg.includes('Backend unavailable') || msg.includes('Failed to fetch') || msg.includes('port 8000')) {
+        setErrorType('network');
+      } else if (msg.includes('Unsupported') || msg.includes('Invalid') || msg.includes('empty')) {
+        setErrorType('validation');
+      } else {
+        setErrorType('server');
+      }
     } finally {
       setLoading(false);
+      // Reset input value so re-uploading the same file works
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -41,14 +83,21 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
     }
   };
 
-  const handleSample = async () => {
+  const handleSample = async (preset: 'harmonic' | 'low_rank_blocks' | 'texture_noise' = 'harmonic') => {
     setError(null);
+    setErrorType(null);
     setLoading(true);
     try {
-      const meta = await loadSampleImage();
+      const meta = await loadSampleImage(preset);
       onImageLoaded(meta);
     } catch (err: any) {
-      setError(err.message || 'Failed to load sample image');
+      const msg = err.message || 'Failed to load sample image.';
+      setError(msg);
+      if (msg.includes('Backend unavailable') || msg.includes('Failed to fetch')) {
+        setErrorType('network');
+      } else {
+        setErrorType('server');
+      }
     } finally {
       setLoading(false);
     }
@@ -65,10 +114,28 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
         </p>
       </div>
 
+      {/* Structured Error Display */}
       {error && (
-        <div className="flex items-center space-x-2 p-3.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300 text-sm">
-          <AlertCircle className="w-5 h-5 shrink-0 text-rose-500" />
-          <span>{error}</span>
+        <div className={`p-4 rounded-xl border space-y-2 ${
+          errorType === 'network'
+            ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+            : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-900 text-rose-900 dark:text-rose-200'
+        }`}>
+          <div className="flex items-center space-x-2 text-sm font-semibold">
+            {errorType === 'network' ? (
+              <ServerCrash className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
+            )}
+            <span>{errorType === 'network' ? 'Backend Service Offline' : 'Upload Error'}</span>
+          </div>
+          <p className="text-xs leading-relaxed pl-7">{error}</p>
+          {errorType === 'network' && (
+            <div className="mt-2 pl-7 text-xs bg-amber-100/60 dark:bg-amber-900/30 p-2.5 rounded-lg border border-amber-200 dark:border-amber-800/50 font-mono">
+              <span className="font-semibold block mb-1">To start the backend server, run in PowerShell:</span>
+              <code className="text-slate-800 dark:text-slate-100 font-bold">$env:PYTHONPATH='backend'; python -m uvicorn app.main:app --port 8000 --reload</code>
+            </div>
+          )}
         </div>
       )}
 
@@ -98,11 +165,11 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
         />
         <div className="flex flex-col items-center justify-center space-y-3">
           <div className="p-3 rounded-full bg-sky-50 dark:bg-sky-950/80 text-sky-600 dark:text-sky-400">
-            <UploadCloud className="w-8 h-8" />
+            {loading ? <RefreshCw className="w-8 h-8 animate-spin" /> : <UploadCloud className="w-8 h-8" />}
           </div>
           <div>
             <span className="font-medium text-slate-800 dark:text-slate-200">
-              {loading ? 'Processing image tensor...' : 'Click to select or drag and drop image file'}
+              {loading ? 'Processing & validating image tensor...' : 'Click to select or drag and drop image file'}
             </span>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Supported Formats: PNG, JPEG / JPG, WebP, BMP (Max 20MB)
@@ -111,19 +178,32 @@ export const ImageUploadView: React.FC<ImageUploadViewProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-2 text-xs text-slate-500 dark:text-slate-400">
-          <ShieldCheck className="w-4 h-4 text-emerald-500" />
+          <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
           <span>Integrity Guard: The original raw byte file is preserved immutable and never altered.</span>
         </div>
-        <button
-          onClick={handleSample}
-          disabled={loading}
-          className="flex items-center space-x-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-sky-500" />
-          <span>Load Synthetic Benchmark Image</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <span className="text-xs text-slate-400">Benchmarks:</span>
+          <button
+            onClick={() => handleSample('harmonic')}
+            disabled={loading}
+            className="flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors disabled:opacity-50"
+            title="Load continuous harmonic Fourier waves"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-sky-500" />
+            <span>Harmonic Waves</span>
+          </button>
+          <button
+            onClick={() => handleSample('low_rank_blocks')}
+            disabled={loading}
+            className="flex items-center space-x-1 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors disabled:opacity-50"
+            title="Load strictly rank-3 geometric block matrix"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+            <span>Rank-3 Blocks</span>
+          </button>
+        </div>
       </div>
 
       {metadata && (

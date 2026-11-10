@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sun, Moon, Binary, Sparkles } from 'lucide-react';
+import { Sun, Moon, Binary, Sparkles, Wifi, WifiOff } from 'lucide-react';
 import type { ImageMetadata } from '../types';
 
 interface HeaderProps {
@@ -8,6 +8,7 @@ interface HeaderProps {
   metadata: ImageMetadata | null;
   onLoadSample: () => void;
   loadingSample: boolean;
+  backendOnline: boolean | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = ({
   metadata,
   onLoadSample,
   loadingSample,
+  backendOnline,
 }) => {
   return (
     <header className="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur sticky top-0 z-30 px-6 py-3.5 transition-colors">
@@ -40,10 +42,34 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="flex items-center space-x-3">
+          {/* Backend Status Badge */}
+          {backendOnline !== null && (
+            <div
+              className={`hidden sm:flex items-center space-x-1.5 text-xs font-mono px-2.5 py-1 rounded-md border ${
+                backendOnline
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800'
+              }`}
+              title={backendOnline ? 'FastAPI server online at http://127.0.0.1:8000' : 'Backend is unreachable on port 8000'}
+            >
+              {backendOnline ? (
+                <>
+                  <Wifi className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>API 8000 Connected</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
+                  <span>API Offline</span>
+                </>
+              )}
+            </div>
+          )}
+
           {metadata && (
             <div className="hidden md:flex items-center space-x-2 text-xs font-mono px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>{metadata.filename}</span>
+              <span className="truncate max-w-[120px]">{metadata.filename}</span>
               <span className="text-slate-400">({metadata.width}×{metadata.height}, {metadata.format})</span>
             </div>
           )}
@@ -55,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Load mathematical benchmark harmonic wave image"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>{loadingSample ? 'Loading...' : 'Load Sample Matrix'}</span>
+            <span>{loadingSample ? 'Loading...' : 'Sample Image'}</span>
           </button>
 
           <button
