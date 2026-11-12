@@ -1,6 +1,6 @@
 # Mathematical Image Analysis and AI Image Protection System (PhotoGuard)
 
-Theoretically feasible and currently working
+Theoretically feasible and currently working on practicality
 
 An educational and university-level mathematical computing platform for analyzing images as discrete tensors and matrices, evaluating spectral decompositions (eigenvalues and eigenvectors), performing Singular Value Decomposition (SVD), and reconstructing low-rank approximations via the Eckart-Young-Mirsky theorem.
 
